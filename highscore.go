@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ant0ine/go-json-rest/rest"
@@ -12,33 +13,57 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-const Port = 8080
-
-type Model struct {
-	DB gorm.DB
+type AppServer struct {
+	DBType     string
+	DBUser     string
+	DBPassword string
+	DBIP       string
+	Port       int
+	DBPort     int
+	Database   string
+	DBOptions  []string
+	DB         gorm.DB
 }
 
 // Struct that is stored in database
 type HighScore struct {
 	ID        uint      `gorm:"primary_key"`
 	Name      string    `sql:"not null" json:"name"`
+	Rank      string    `sql:"-"`
 	Score     uint64    `sql:"not null" json:"score,string"`
 	Round     uint      `sql:"not null" json:"round,string"`
-	Seconds   uint      `sql:"not null" json:"seconds,string"`
+	Seconds   uint      `sql:"not null" json:"time,string"`
 	CreatedAt time.Time `sql:"DEFAULT:current_timestamp" json:"date,string"`
 }
 
 func main() {
-	m := Model{}
-	m.InitDB()
-	m.InitSchema()
+	server := AppServer{
+		DBType:     "mysql",
+		DBUser:     "highscores",
+		DBPassword: "niko1niko",
+		DBIP:       "192.168.0.20",
+		Port:       8080,
+		DBPort:     3306,
+		Database:   "HighScores",
+		DBOptions:  []string{"charset=utf8", "parseTime=true"},
+	}
+	server.Start()
+}
+
+func (app AppServer) Start() {
+	app.InitDB()
+	app.InitSchema()
+
+	defer app.DB.Close()
 
 	api := rest.NewApi()
 	api.Use(rest.DefaultDevStack...)
 
 	router, err := rest.MakeRouter(
-		rest.Get("/", m.GetHighScores),
-		rest.Post("/", m.PostHighScore),
+		rest.Get("/highscores/all", app.GetAllHighScores),
+		rest.Get("/highscores/:count", app.GetHighScores),
+		rest.Get("/highscores/", app.GetHighScores),
+		rest.Post("/highscores/", app.PostHighScore),
 	// rest.Get("/:name", m.GetPlayerScores),
 	// rest.Delete("/:name/:id", m.Delete),
 	)
@@ -47,43 +72,90 @@ func main() {
 	}
 
 	api.SetApp(router)
-	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(Port), api.MakeHandler()))
+	log.Fatal(
+		http.ListenAndServe(
+			":"+strconv.Itoa(app.Port), api.MakeHandler()))
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Database
 ///////////////////////////////////////////////////////////////////////////////
-func (m *Model) InitDB() {
+func (app *AppServer) InitDB() {
 	var err error
-	dataSource := "highscores:niko1niko@(192.168.0.20:3306)/HighScores"
-	m.DB, err = gorm.Open("mysql", dataSource)
+	app.DB, err = gorm.Open(app.DBType, app.Source())
 	if err != nil {
 		log.Fatalf("Error connect to database, the error is '%v'", err)
 	}
-	m.DB.LogMode(true)
+	app.DB.LogMode(true)
 }
 
-func (m *Model) InitSchema() {
-	m.DB.AutoMigrate(&HighScore{})
+func (app *AppServer) InitSchema() {
+	app.DB.AutoMigrate(&HighScore{})
+}
+
+func (app *AppServer) Source() string {
+	switch app.DBType {
+	case "mysql":
+		dataString := fmt.Sprintf(
+			"%s:%s@(%s:%s)/%s?%s",
+			app.DBUser,
+			app.DBPassword,
+			app.DBIP,
+			strconv.Itoa(app.DBPort),
+			app.Database,
+			strings.Join(app.DBOptions, "&"),
+		)
+		return dataString
+	case "ps":
+		return ""
+	case "sqlite":
+		return ""
+	default:
+		return ""
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Handlers
 ///////////////////////////////////////////////////////////////////////////////
-func (m *Model) GetHighScores(w rest.ResponseWriter, r *rest.Request) {
+func (app *AppServer) GetAllHighScores(w rest.ResponseWriter, r *rest.Request) {
+	// var rank []int
 	hss := []HighScore{}
-	m.DB.Find(&hss).Order("score DESC").Limit(2)
+	app.DB.Order("score DESC").Find(&hss)
 	w.WriteJson(&hss)
 }
 
-func (m *Model) PostHighScore(w rest.ResponseWriter, r *rest.Request) {
-	hs := HighScore{}
-	if err := r.DecodeJsonPayload(&hs); err != nil {
+func (app *AppServer) GetHighScores(w rest.ResponseWriter, r *rest.Request) {
+	param := r.PathParam("count")
+	count, err := strconv.Atoi(param)
+	if err != nil {
+		count = 50
+	}
+	// numbers, _ := regexp.Compile("[0-9]*")
+	// if numbers.Match([]byte(param)) {
+	// 	count, _ = strconv.Atoi(param)
+	// } else {
+	// 	count = 50
+	// }
+
+	hss := []HighScore{}
+	app.DB.Order("score DESC").Limit(count).Find(&hss)
+	w.WriteJson(&hss)
+}
+
+func (app *AppServer) PostHighScore(w rest.ResponseWriter, r *rest.Request) {
+	var err error
+	var hs HighScore
+	if err = r.DecodeJsonPayload(&hs); err != nil {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// if !verifyScore(&hs) {
+	// 	rest.Error(w, "invalid json", http.StatusBadRequest)
+	// 	return
+	// }
 
-	if err := m.DB.Save(&hs).Error; err != nil {
+	if err := app.DB.Save(&hs).Error; err != nil {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
@@ -108,5 +180,6 @@ func NumberToRank(n int) string {
 	}
 }
 
-func verifyScore(hs HighScore) {
+func verifyScore(hs *HighScore) bool {
+	return true
 }
