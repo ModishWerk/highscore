@@ -14,7 +14,7 @@ import (
 )
 
 type AppServer struct {
-	DBType     string
+	Driver     string
 	DBUser     string
 	DBPassword string
 	DBIP       string
@@ -29,7 +29,7 @@ type AppServer struct {
 type HighScore struct {
 	ID        uint      `gorm:"primary_key"`
 	Name      string    `sql:"not null" json:"name"`
-	Rank      string    `sql:"-"`
+	Rank      int       `sql:"-"`
 	Score     uint64    `sql:"not null" json:"score,string"`
 	Round     uint      `sql:"not null" json:"round,string"`
 	Seconds   uint      `sql:"not null" json:"time,string"`
@@ -38,7 +38,7 @@ type HighScore struct {
 
 func main() {
 	server := AppServer{
-		DBType:     "mysql",
+		Driver:     "mysql",
 		DBUser:     "highscores",
 		DBPassword: "niko1niko",
 		DBIP:       "192.168.0.20",
@@ -62,10 +62,10 @@ func (app AppServer) Start() {
 	router, err := rest.MakeRouter(
 		rest.Get("/highscores/all", app.GetAllHighScores),
 		rest.Get("/highscores/:count", app.GetHighScores),
-		rest.Get("/highscores/", app.GetHighScores),
-		rest.Post("/highscores/", app.PostHighScore),
-	// rest.Get("/:name", m.GetPlayerScores),
-	// rest.Delete("/:name/:id", m.Delete),
+		rest.Get("/highscores", app.GetHighScores),
+		rest.Post("/highscores", app.PostHighScore),
+		// rest.Get("/:name", m.GetPlayerScores),
+		// rest.Delete("/:name/:id", m.Delete),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -82,7 +82,7 @@ func (app AppServer) Start() {
 ///////////////////////////////////////////////////////////////////////////////
 func (app *AppServer) InitDB() {
 	var err error
-	app.DB, err = gorm.Open(app.DBType, app.Source())
+	app.DB, err = gorm.Open(app.Driver, app.Conn())
 	if err != nil {
 		log.Fatalf("Error connect to database, the error is '%v'", err)
 	}
@@ -93,8 +93,8 @@ func (app *AppServer) InitSchema() {
 	app.DB.AutoMigrate(&HighScore{})
 }
 
-func (app *AppServer) Source() string {
-	switch app.DBType {
+func (app *AppServer) Conn() string {
+	switch app.Driver {
 	case "mysql":
 		dataString := fmt.Sprintf(
 			"%s:%s@(%s:%s)/%s?%s",
@@ -131,12 +131,6 @@ func (app *AppServer) GetHighScores(w rest.ResponseWriter, r *rest.Request) {
 	if err != nil {
 		count = 50
 	}
-	// numbers, _ := regexp.Compile("[0-9]*")
-	// if numbers.Match([]byte(param)) {
-	// 	count, _ = strconv.Atoi(param)
-	// } else {
-	// 	count = 50
-	// }
 
 	hss := []HighScore{}
 	app.DB.Order("score DESC").Limit(count).Find(&hss)
@@ -146,14 +140,16 @@ func (app *AppServer) GetHighScores(w rest.ResponseWriter, r *rest.Request) {
 func (app *AppServer) PostHighScore(w rest.ResponseWriter, r *rest.Request) {
 	var err error
 	var hs HighScore
+
 	if err = r.DecodeJsonPayload(&hs); err != nil {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// if !verifyScore(&hs) {
-	// 	rest.Error(w, "invalid json", http.StatusBadRequest)
-	// 	return
-	// }
+
+	if err = hs.VerifyScore(); err != nil {
+		rest.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := app.DB.Save(&hs).Error; err != nil {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
@@ -180,6 +176,47 @@ func NumberToRank(n int) string {
 	}
 }
 
-func verifyScore(hs *HighScore) bool {
-	return true
+func (hs HighScore) VerifyScore() error {
+	if err := checkMissingFields(hs); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func checkMissingFields(hs HighScore) error {
+	var missingFields []string
+
+	if hs.Name == "" {
+		missingFields = append(missingFields, "name")
+	}
+	if hs.Round == 0 {
+		missingFields = append(missingFields, "round")
+	}
+	if hs.Score == 0 {
+		missingFields = append(missingFields, "score")
+	}
+	if hs.Seconds == 0 {
+		missingFields = append(missingFields, "seconds")
+	}
+
+	count := len(missingFields)
+	switch count {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("%s must be present",
+			strings.Title(missingFields[0]))
+	case 2:
+		return fmt.Errorf("%s and %s must be present",
+			strings.Title(missingFields[0]),
+			missingFields[1],
+		)
+	default:
+		return fmt.Errorf("%s, %s, and %s must be present",
+			strings.Title(missingFields[0]),
+			strings.Join(missingFields[1:count-1], ", "),
+			missingFields[count-1],
+		)
+	}
 }
