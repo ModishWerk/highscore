@@ -60,10 +60,11 @@ func (app AppServer) Start() {
 	api.Use(rest.DefaultDevStack...)
 
 	router, err := rest.MakeRouter(
-		rest.Get("/highscores/all", app.GetAllHighScores),
-		rest.Get("/highscores/:count", app.GetHighScores),
-		rest.Get("/highscores", app.GetHighScores),
-		rest.Post("/highscores", app.PostHighScore),
+		rest.Get("/api/highscores", app.GetUrls),
+		rest.Get("/api/highscores/all", app.GetAllHighScores),
+		rest.Get("/api/highscores/:count", app.GetHighScores),
+		rest.Get("/api/highscores/:count/:offset", app.GetHighScoresRange),
+		rest.Post("/api/highscores", app.PostHighScore),
 		// rest.Get("/:name", m.GetPlayerScores),
 		// rest.Delete("/:name/:id", m.Delete),
 	)
@@ -118,6 +119,21 @@ func (app *AppServer) Conn() string {
 ///////////////////////////////////////////////////////////////////////////////
 // Handlers
 ///////////////////////////////////////////////////////////////////////////////
+func (app *AppServer) GetUrls(w rest.ResponseWriter, r *rest.Request) {
+	var host string = "https://raviko.dlinkddns.com/api/highscores"
+	w.WriteJson(struct {
+		AllHighscores string `json:"get_all_highscores_url"`
+		GetTopScores  string `json:"get_n_scores_url"`
+		GetScoreRange string `json:"get_n_score_with_offset_url"`
+		PostHighScore string `json:"post_highscore_url"`
+	}{
+		host + "/all",
+		host + "/{count}",
+		host + "/{count}/{offset}",
+		host + "/",
+	})
+}
+
 func (app *AppServer) GetAllHighScores(w rest.ResponseWriter, r *rest.Request) {
 	// var rank []int
 	hss := []HighScore{}
@@ -134,6 +150,24 @@ func (app *AppServer) GetHighScores(w rest.ResponseWriter, r *rest.Request) {
 
 	hss := []HighScore{}
 	app.DB.Order("score DESC").Limit(count).Find(&hss)
+	w.WriteJson(&hss)
+}
+
+func (app *AppServer) GetHighScoresRange(w rest.ResponseWriter, r *rest.Request) {
+	countParam := r.PathParam("count")
+	offsetParam := r.PathParam("offset")
+	count, err := strconv.Atoi(countParam)
+	if err != nil {
+		count = 50
+	}
+
+	offset, err := strconv.Atoi(offsetParam)
+	if err != nil {
+		offset = 0
+	}
+
+	hss := []HighScore{}
+	app.DB.Order("score DESC").Offset(offset).Limit(count).Find(&hss)
 	w.WriteJson(&hss)
 }
 
