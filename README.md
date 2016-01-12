@@ -1,3 +1,3 @@
 # Highscore
 
-Highscore server for Planet Defense.
+Highscore server for Battle of the Shapes.
